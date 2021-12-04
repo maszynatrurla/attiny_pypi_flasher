@@ -54,7 +54,7 @@ class Klucha:
         self._mcu = mcu
         self._reset = OutPin(GPIO_RESET)
         self._spi = spidev.SpiDev()
-        self._spi.open(0, 0)
+        self._spi.open(SPI_DEVICE, 0)
         self._spi.max_speed_hz = SPEED_LIMIT_HZ
         self._spi.mode = 0
         self._spi.no_cs = True

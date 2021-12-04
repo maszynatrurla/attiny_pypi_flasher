@@ -1,10 +1,10 @@
 
-= ATTINY Flasher on Raspberry Pi =
+# ATTINY Flasher on Raspberry Pi
 
 Python script which allows to use Raspberry Pi as serial programmer of ATTINY microcontrollers (AVR).
 
 
-== Raspberry Pi pinout ==
+## Raspberry Pi pinout 
 
 ```
                        __
@@ -24,7 +24,7 @@ Python script which allows to use Raspberry Pi as serial programmer of ATTINY mi
 
 ```
 
-== Serial programming - ATTINY13 ==
+## Serial programming - ATTINY13 
 
 
 ```
@@ -36,7 +36,7 @@ Python script which allows to use Raspberry Pi as serial programmer of ATTINY mi
 ```
 
 
-== Usage ==
+## Usage
 
 ```
 
@@ -61,7 +61,7 @@ Script reads/writes program memory of microcontroller. It accepts raw binary (.b
 On write, it always starts at 0 offset and re-programs entire program memory.
 
 
-== Limitations ==
+## Limitations
 
 This is a toy project. You probably should not use it.
 
