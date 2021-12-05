@@ -30,7 +30,8 @@ from gpio import pin_init, OutPin
 
 GPIO_RESET = 2
 SPI_DEVICE = 0
-SPEED_LIMIT_HZ = 100000
+HI_SPEED_LIMIT_HZ = 100000
+LO_SPEED_LIMIT_HZ = 10000
 TIMEOUT = 1.0
 
 # Microcontroller support
@@ -49,13 +50,16 @@ class MCU:
         self.page_size = properties["page_size"]
 
 class Klucha:
-    def __init__(self, mcu):
+    def __init__(self, mcu, low_speed = False):
         pin_init()
         self._mcu = mcu
         self._reset = OutPin(GPIO_RESET)
         self._spi = spidev.SpiDev()
         self._spi.open(SPI_DEVICE, 0)
-        self._spi.max_speed_hz = SPEED_LIMIT_HZ
+        if low_speed:
+            self._spi.max_speed_hz = LO_SPEED_LIMIT_HZ
+        else:
+            self._spi.max_speed_hz = HI_SPEED_LIMIT_HZ
         self._spi.mode = 0
         self._spi.no_cs = True
         self._spi.lsbfirst = False
@@ -116,7 +120,7 @@ class Klucha:
         word address itself)!
         """
         wordAddress = address >> 1
-        assert wordAddress < 0x200, "Address out of range for ATTINY13"
+        assert wordAddress < self._mcu.program_capacity_words, "Address out of range for " + self._mcu.name
         if address & 0x1:
             self._txrx([0x48, 0x00, wordAddress & 0xFF, dataByte])
         else:
@@ -137,6 +141,39 @@ class Klucha:
         assert wordAddress < self._mcu.program_capacity_words, "Address out of range for " + self._mcu.name
         self._txrx([0x4C, wordAddress >> 8, wordAddress & 0xFF, 0x00])
         self._waitUntilDone()
+        
+    def readFuseByte(self, byteNo):
+        """
+        Read fuse byte.
+        """
+        byte_sel = (byteNo & 1) << 3
+        return self._txrx([0x50 | byte_sel, byte_sel, 0x21, 0x37], "...o")[0]
+        
+    def writeFuseByte(self, byteNo, value):
+        """
+        Write fuse byte.
+        """
+        byte_sel = (byteNo & 1) << 3
+        self._txrx([0xAC, 0xA0 | byte_sel, 0x00, value])
+        self._waitUntilDone()
+        
+    def readLockBits(self):
+        """
+        Read lock bits.
+        """
+        return self._txrx([0x58, 0x00, 0x00, 0x00], "...o")[0] & 0x3F
+        
+    def readSignatureByte(self, address):
+        """
+        Read signature byte.
+        """
+        return self._txrx([0x30, 0x12, address, 0x00], "...o")[0]
+        
+    def readCalibrationByte(self, byteNo):
+        """
+        Read calibration byte.
+        """
+        return self._txrx([0x38, 0x12, byteNo & 1, 0x00], "...o")[0]
         
     def program(self, data):
         """
@@ -263,7 +300,81 @@ def dump_flash(flasher, fname, length, quiet):
                 break
             print((" %03X | " % (i * page_size)) + " ".join("%02X" % b for b in page))
     
-        
+def my_i8_bin(ival):
+    sval = bin(ival)[2:]
+    return ("0" * (8 - len(sval))) + sval
+    
+def dump_bits(flasher, fname, quiet):
+    sig0 = flasher.readSignatureByte(0x00)
+    sig1 = flasher.readSignatureByte(0x01)
+    sig2 = flasher.readSignatureByte(0x02)
+    
+    calib0 = flasher.readCalibrationByte(0)
+    calib1 = flasher.readCalibrationByte(1)
+    
+    lock = flasher.readLockBits()
+    
+    fuseL = flasher.readFuseByte(0)
+    fuseH = flasher.readFuseByte(1)
+    
+    txt = """Signature:
+0x000 : 0x%02X
+0x001 : 0x%02X
+0x002 : 0x%02X
+
+Calibration(0, 1): 0x%02X 0x%02X
+    
+Lock bits: 0x%02X (0b%s)
+
+Fuses (H, L): 0x%02X 0x%02X
+  H: 0b%s
+  L: 0b%s
+""" % (sig0, sig1, sig2, calib0, calib1, lock, my_i8_bin(lock),
+            fuseH, fuseL, my_i8_bin(fuseH), my_i8_bin(fuseL))
+    
+    if fname is not None:
+        logging.info("Saving read summary to \"%s\"...", fname)
+        with open(fname, "w") as fp:
+            fp.write(txt)
+            
+    if not quiet:
+        print(txt)
+
+def interactive_fuse(flasher):
+    print("Values of fuses now:")
+    fuseL = flasher.readFuseByte(0)
+    fuseH = flasher.readFuseByte(1)
+    print(" H: 0x%02X (0b%s)" % (fuseH, my_i8_bin(fuseH)))
+    print(" L: 0x%02X (0b%s)" % (fuseL, my_i8_bin(fuseL)))
+    choice = ""
+    try:
+        while choice not in ("H", "L"):
+            print("Enter fuse to modify ('H'/'L')")
+            choice = input().strip().upper()
+            
+        while True:
+            print("Specify new value of fuse")
+            try:
+                value = int(input(), base=0)
+            except:
+                print("Invalid format")
+                continue
+            print("Proceed to write value 0x%02X (0b%s) to fuse%s (y/n)?" % (
+                    value, my_i8_bin(value), choice))
+            
+            if input().strip().lower() == 'y':
+                break
+                
+        if choice == "H":
+            flasher.writeFuseByte(1, value)
+        else:
+            flasher.writeFuseByte(0, value)
+            
+        print("Done.")
+            
+    except KeyboardInterrupt:
+        print("Aborting")
+
 def main(args):
     logging.getLogger().setLevel("INFO")
     
@@ -272,23 +383,31 @@ def main(args):
     
     else:
         mcu = get_mcu(args)
-        mat = Klucha(mcu)
+        mat = Klucha(mcu, args.low_speed)
         
         mat.enableProgramming()
+        
+        try:
                    
-        if "write" == args.command:
-            assert args.bin is not None, "Binary file must be specified"
+            if "write" == args.command:
+                assert args.bin is not None, "Binary file must be specified"
+                
+                if not args.bin.endswith(".bin"):
+                    logging.warning("File does not end with .bin extension. Might be incorrect format.")
+                
+                write_file(mat, args.bin, args.length)
+                
+            elif "read" == args.command:
+                dump_flash(mat, args.output, args.length, args.quiet)
             
-            if not args.bin.endswith(".bin"):
-                logging.warning("File does not end with .bin extension. Might be incorrect format.")
-            
-            write_file(mat, args.bin, args.length)
-            
-            
-        elif "read" == args.command:
-            dump_flash(mat, args.output, args.length, args.quiet)        
-            
-        mat.close()
+            elif "read-fuses-n-crap" == args.command:
+                dump_bits(mat, args.output, args.quiet)
+                
+            elif "write-fuse" == args.command:
+                interactive_fuse(mat)
+
+        finally:
+            mat.close()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="AVR flasher")
@@ -296,8 +415,9 @@ if __name__ == "__main__":
     parser.add_argument("--output", help="Output file")
     parser.add_argument("--length", help="Length of read/write operation (in bytes)", type=int)
     parser.add_argument("--quiet", help="Don't print memory contents to console on read", action="store_true")
-    parser.add_argument("command", metavar="CMD", help="Command (nop | write | read | list-mcus)",
-            choices=["nop", "write", "read", "list-mcus"])
+    parser.add_argument("--low_speed", help="Decrese speed of SPI clock", action="store_true")
+    parser.add_argument("command", metavar="CMD", help="Command (nop | write | read | read-fuses-n-crap | write-fuse | list-mcus)",
+            choices=["nop", "write", "read", "list-mcus", "read-fuses-n-crap", "write-fuse"])
     parser.add_argument("bin", metavar="BIN", help="Binary file", nargs="?")
     main(parser.parse_args())
 
