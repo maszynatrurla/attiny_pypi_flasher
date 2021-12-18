@@ -24,8 +24,9 @@ Python script which allows to use Raspberry Pi as serial programmer of ATTINY mi
 
 ```
 
-## Serial programming - ATTINY13 
+## Serial programming pinout 
 
+(ATTINY13, ATTINY25, ATTINY45, ATTINY85)
 
 ```
                 _____ 
@@ -35,18 +36,35 @@ Python script which allows to use Raspberry Pi as serial programmer of ATTINY mi
       gnd  4  -|_____|-  5  mosi 
 ```
 
+(ATTINY2313, ATTINY4313)
+
+```
+                _____ 
+   \reset  1  -|o    |-  20  vcc  
+              -|     |-  19  sck  
+              -|     |-  18  miso 
+              -|     |-  17  mosi 
+              -|     |-
+              -|     |-
+              -|     |-
+              -|     |-
+              -|     |-
+     gnd  10  -|_____|-
+```
+
 
 ## Usage
 
 ```
 
-kluchomat.py [-h] [--mcu MCU] [--output OUTPUT] [--length LENGTH] [--quiet] [--low_speed]
+usage: kluchomat.py [-h] [--mcu MCU] [--output OUTPUT] [--length LENGTH] [--quiet] [--low_speed]
                     CMD [BIN]
 
 AVR flasher
 
 positional arguments:
-  CMD              Command (nop | write | read | read-fuses-n-crap | write-fuse | list-mcus)
+  CMD              Command (nop | write | read | read-fuses-n-crap | write-fuse | list-mcus |
+                   read-eeprom | write-eeprom)
   BIN              Binary file
 
 optional arguments:
@@ -69,6 +87,8 @@ Commands:
  * read - reads contents of program memory; results are printed to console and/or output file;
  * read-fuses-n-crap - reads signature, lock bits, fuse bits and calibration bits and prints them;
  * write-fuse - writes fuse bits (interactive);
+ * read-eeprom - reads contents of EEPROM; results are printed to console and/or output file;
+ * write-eeprom - writes contents of .bin file to EEPROM;
  * list-mcus - list possible values for --mcu option (supported models).
 
 Important: use --low_speed option if your microcontroller is fused to run with slow clock speed (e.g. ATTINY13 with internal 128kHz osc).
@@ -77,9 +97,9 @@ Important: use --low_speed option if your microcontroller is fused to run with s
 
 This is a toy project. You probably should not use it.
 
- * Only ATTINY13 is supported - that is the one I needed to program when I wrote this. I might add other models later, but I probably won't.
- * No EEPROM access
- * No lock bits write command
- 
+ * List of supported microcontrollers is very limited and it is unlikely to grow;
+ * I only really tested it with ATTINY13, ATTINY45 and ATTINY2313;
+ * EEPROM write uses byte access, which is probably less efficient than page access;
+ * No lock bits write command.
  
 

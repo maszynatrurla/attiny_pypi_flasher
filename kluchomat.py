@@ -38,7 +38,67 @@ TIMEOUT = 1.0
 MCUS = {
     "attiny13" : {
         "program_memory_size" : 1024,
-        "page_size" : 32
+        "page_size" : 32,
+        "eeprom_size" : 64,
+        "eeprom_page_size" : 4,
+        "signature" : b"\x1E\x90\x07",
+        "fuses" : ("L", "H"),
+    },
+    "attiny13a" : {
+        "program_memory_size" : 1024,
+        "page_size" : 32,
+        "eeprom_size" : 64,
+        "eeprom_page_size" : 4,
+        "signature" : b"\x1E\x90\x07",
+        "fuses" : ("L", "H"),
+    },
+    "attiny25" : {
+        "program_memory_size" : 2048,
+        "page_size" : 32,
+        "eeprom_size" : 128,
+        "eeprom_page_size" : 4,
+        "signature" : b"\x1E\x91\x08",
+        "fuses" : ("L", "H", "EXT"),
+    },
+    "attiny45" : {
+        "program_memory_size" : 4096,
+        "page_size" : 64,
+        "eeprom_size" : 256,
+        "eeprom_page_size" : 4,
+        "signature" : b"\x1E\x92\x06",
+        "fuses" : ("L", "H", "EXT"),
+    },
+    "attiny85" : {
+        "program_memory_size" : 8192,
+        "page_size" : 64,
+        "eeprom_size" : 512,
+        "eeprom_page_size" : 4,
+        "signature" : b"\x1E\x93\x0B",
+        "fuses" : ("L", "H", "EXT"),
+    },
+    "attiny2313" : {
+        "program_memory_size" : 2048,
+        "page_size" : 32,
+        "eeprom_size" : 128,
+        "eeprom_page_size" : 4,
+        "signature" : b"\x1E\x91\x0A",
+        "fuses" : ("L", "H", "EXT"),
+    },
+    "attiny2313a" : {
+        "program_memory_size" : 2048,
+        "page_size" : 32,
+        "eeprom_size" : 128,
+        "eeprom_page_size" : 4,
+        "signature" : b"\x1E\x91\x0A",
+        "fuses" : ("L", "H", "EXT"),
+    },
+    "attiny4313" : {
+        "program_memory_size" : 4096,
+        "page_size" : 64,
+        "eeprom_size" : 256,
+        "eeprom_page_size" : 4,
+        "signature" : b"\x1E\x92\x0D",
+        "fuses" : ("L", "H", "EXT"),
     },
 }
 
@@ -48,6 +108,10 @@ class MCU:
         self.program_capacity_b = properties["program_memory_size"]
         self.program_capacity_words = properties["program_memory_size"] / 2
         self.page_size = properties["page_size"]
+        self.eeprom_size = properties["eeprom_size"]
+        self.eeprom_page_size = properties["eeprom_page_size"]
+        self.signature = properties["signature"]
+        self.fuses = properties["fuses"]
 
 class Klucha:
     def __init__(self, mcu, low_speed = False):
@@ -146,15 +210,26 @@ class Klucha:
         """
         Read fuse byte.
         """
-        byte_sel = (byteNo & 1) << 3
-        return self._txrx([0x50 | byte_sel, byte_sel, 0x21, 0x37], "...o")[0]
+        if byteNo == 0:   # fuseL
+            return self._txrx([0x50, 0x00, 0x21, 0x37], "...o")[0]
+        elif byteNo == 1: # fuseH
+            return self._txrx([0x58, 0x08, 0x21, 0x37], "...o")[0]
+        elif byteNo == 2: # fuseExt
+            return self._txrx([0x50, 0x08, 0x21, 0x37], "...o")[0]
+        raise Exception("byteNo out of range")
         
     def writeFuseByte(self, byteNo, value):
         """
         Write fuse byte.
         """
-        byte_sel = (byteNo & 1) << 3
-        self._txrx([0xAC, 0xA0 | byte_sel, 0x00, value])
+        if byteNo == 0:   # fuseL
+            self._txrx([0xAC, 0xA0, 0x00, value])
+        elif byteNo == 1: # fuseH
+            self._txrx([0xAC, 0xA8, 0x00, value])
+        elif byteNo == 2: # fuseExt
+            self._txrx([0xAC, 0xA4, 0x00, value])
+        else:
+            raise Exception("byteNo out of range")
         self._waitUntilDone()
         
     def readLockBits(self):
@@ -174,6 +249,30 @@ class Klucha:
         Read calibration byte.
         """
         return self._txrx([0x38, 0x12, byteNo & 1, 0x00], "...o")[0]
+        
+    def readEeprom(self, address):
+        """
+        Read EEPROM byte.
+        """
+        return self._txrx([0xA0, 0x00, address & 0xFF, 0x00], "...o")[0]
+        
+    def writeEeprom(self, address, data):
+        """
+        Write EEPROM byte.
+        """
+        self._txrx([0xC0, 0x00, address & 0xFF, data])
+        self._waitUntilDone()
+        
+    def checkSignature(self):
+        """
+        Reads all signature bytes and check if they have expected values for
+        given MCU. Good idea as a pre-programming step.
+        """
+        expected = self._mcu.signature
+        actual = bytes(self.readSignatureByte(byte) for byte in range(len(expected)))
+        if actual != expected:
+            raise Exception("Wrong signature of %s\n  expected %s\n  got %s",
+                    self._mcu.name, expected.hex().upper(), actual.hex().upper())
         
     def program(self, data):
         """
@@ -247,7 +346,7 @@ class Klucha:
                 raise Exception("Timeout")
         
 def get_mcu(args):
-    name = args.mcu
+    name = args.mcu.lower()
     props = MCUS[name]
     return MCU(name, props)
     
@@ -267,6 +366,8 @@ def write_file(flasher, fname, length):
         assert len(data) > 0, "Empty data"
         assert len(data) <= flasher.getMcu().program_capacity_b, "Data too long"
         
+        logging.info("Check signature...")
+        flasher.checkSignature()
         logging.info("Erasing...")
         flasher.chipErase()
         logging.info("Programming...")
@@ -314,8 +415,13 @@ def dump_bits(flasher, fname, quiet):
     
     lock = flasher.readLockBits()
     
-    fuseL = flasher.readFuseByte(0)
-    fuseH = flasher.readFuseByte(1)
+    fuses = []
+    for idx, label in enumerate(flasher.getMcu().fuses):
+        fuses.append((label, flasher.readFuseByte(idx)))
+        
+    fusesLab = ", ".join(label for label, _ in fuses)
+    fusesHex = " ".join(("0x%02X" % value) for _, value in fuses)
+    fusesBin = "\n  ".join(("%-3s: 0b%s" % (label, my_i8_bin(value))) for label, value in fuses)
     
     txt = """Signature:
 0x000 : 0x%02X
@@ -326,11 +432,10 @@ Calibration(0, 1): 0x%02X 0x%02X
     
 Lock bits: 0x%02X (0b%s)
 
-Fuses (H, L): 0x%02X 0x%02X
-  H: 0b%s
-  L: 0b%s
+Fuses (%s): %s
+  %s
 """ % (sig0, sig1, sig2, calib0, calib1, lock, my_i8_bin(lock),
-            fuseH, fuseL, my_i8_bin(fuseH), my_i8_bin(fuseL))
+            fusesLab, fusesHex, fusesBin)
     
     if fname is not None:
         logging.info("Saving read summary to \"%s\"...", fname)
@@ -342,14 +447,15 @@ Fuses (H, L): 0x%02X 0x%02X
 
 def interactive_fuse(flasher):
     print("Values of fuses now:")
-    fuseL = flasher.readFuseByte(0)
-    fuseH = flasher.readFuseByte(1)
-    print(" H: 0x%02X (0b%s)" % (fuseH, my_i8_bin(fuseH)))
-    print(" L: 0x%02X (0b%s)" % (fuseL, my_i8_bin(fuseL)))
+    fuses = flasher.getMcu().fuses
+    for idx, label in enumerate(fuses):
+        value = flasher.readFuseByte(idx)
+        print(" %-3s: 0x%02X (0b%s)" % (label, value, my_i8_bin(value)))
+    
     choice = ""
     try:
-        while choice not in ("H", "L"):
-            print("Enter fuse to modify ('H'/'L')")
+        while choice not in fuses:
+            print("Enter fuse to modify (%s)" % "/".join(("'%s'" % label) for label in fuses))
             choice = input().strip().upper()
             
         while True:
@@ -365,15 +471,53 @@ def interactive_fuse(flasher):
             if input().strip().lower() == 'y':
                 break
                 
-        if choice == "H":
-            flasher.writeFuseByte(1, value)
-        else:
-            flasher.writeFuseByte(0, value)
-            
+        idx = fuses.index(choice)
+        flasher.writeFuseByte(idx, value)
         print("Done.")
             
     except KeyboardInterrupt:
         print("Aborting")
+        
+def write_eeprom(flasher, fname, length):
+    with open(fname, "rb") as fp:
+        if length is None:
+            data = fp.read()
+        else:
+            data = fp.read(length)
+            
+        logging.info("Loaded %d bytes from \"%s\"", len(data), fname)
+        
+        assert len(data) > 0, "Empty data"
+        assert len(data) <= flasher.getMcu().eeprom_size, "Data too long"
+
+        for address in range(len(data)):
+            flasher.writeEeprom(address, data[address])
+        
+def dump_eeprom(flasher, fname, length, quiet):
+    mcu = flasher.getMcu()
+    
+    if length is None:
+        length = mcu.eeprom_size
+        
+    assert length <= mcu.eeprom_size, "Excessive length"
+    
+    logging.info("Reading %d bytes from %s...", length, mcu.name)
+    data = [flasher.readEeprom(i) for i in range(length)]
+    
+    if fname is not None:
+        logging.info("Saving binary data to \"%s\"...", fname)
+        with open(fname, "wb") as fp:
+            fp.write(bytes(data))
+            
+    if not quiet:
+        page_size = mcu.eeprom_page_size
+        print("     | " + " ".join("%02X" % i for i in range(page_size)))
+        print("-----|-" + "-" * (page_size * 3))
+        for i in range(mcu.program_capacity_b // page_size):
+            page = data[i * page_size : (i + 1) * page_size]
+            if not page:
+                break
+            print((" %03X | " % (i * page_size)) + " ".join("%02X" % b for b in page))
 
 def main(args):
     logging.getLogger().setLevel("INFO")
@@ -399,6 +543,12 @@ def main(args):
                 
             elif "read" == args.command:
                 dump_flash(mat, args.output, args.length, args.quiet)
+                
+            elif "read-eeprom" == args.command:
+                dump_eeprom(mat, args.output, args.length, args.quiet)
+                
+            elif "write-eeprom" == args.command:
+                write_eeprom(mat, args.bin, args.length)
             
             elif "read-fuses-n-crap" == args.command:
                 dump_bits(mat, args.output, args.quiet)
@@ -416,8 +566,8 @@ if __name__ == "__main__":
     parser.add_argument("--length", help="Length of read/write operation (in bytes)", type=int)
     parser.add_argument("--quiet", help="Don't print memory contents to console on read", action="store_true")
     parser.add_argument("--low_speed", help="Decrese speed of SPI clock", action="store_true")
-    parser.add_argument("command", metavar="CMD", help="Command (nop | write | read | read-fuses-n-crap | write-fuse | list-mcus)",
-            choices=["nop", "write", "read", "list-mcus", "read-fuses-n-crap", "write-fuse"])
+    parser.add_argument("command", metavar="CMD", help="Command (nop | write | read | read-fuses-n-crap | write-fuse | list-mcus | read-eeprom | write-eeprom)",
+            choices=["nop", "write", "read", "list-mcus", "read-fuses-n-crap", "write-fuse", "read-eeprom", "write-eeprom"])
     parser.add_argument("bin", metavar="BIN", help="Binary file", nargs="?")
     main(parser.parse_args())
 
